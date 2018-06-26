@@ -1,4 +1,3 @@
-#!/usr/bin/python3
 from numpy import fft
 import numpy as np
 from scipy import constants as const 

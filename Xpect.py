@@ -1,4 +1,3 @@
-#!/usr/bin/python3
 import numpy as np
 from scipy import constants as const 
 
@@ -6,10 +5,10 @@ from scipy import constants as const
 class absorption:
 	def __init__(self, method = 'RT', **kwargs):
 		if method == 'RT':
-			from Xpect_2 import RT_3 as meth
+			from Xpect_new import RT as meth
 
 		elif method == "LR":
-			from Xpect_2 import LR as meth
+			from Xpect_new import LR as meth
 
 		else:
 			raise KeyError("specified method unkown")
@@ -21,7 +20,7 @@ class absorption:
 
 class absorption_RT:
 	def __init__(self, method = 'RT', **kwargs):
-		from Xpect_2 import RT_3 as meth
+		from Xpect_new import RT as meth
 		self.spec = meth.absorption_2(kwargs)
 
 	def get_polarizabilities(self, **kwargs):
@@ -71,7 +70,7 @@ class Raman_RT:
 	def __init__(self, method = 'RT', **kwargs):
 		self.method = method
 		if self.method == 'RT':
-			from Xpect_2 import RT_3 as meth
+			from Xpect_new import RT as meth
 
 		else:
 			raise KeyError("specified method unkown")
@@ -113,7 +112,7 @@ class ESGM_RT:
 	def __init__(self, method = 'RT', **kwargs):
 		self.method = method
 		if self.method == 'RT':
-			from Xpect_2 import RT_3 as meth
+			from Xpect_new import RT as meth
 
 		else:
 			raise KeyError("specified method unkown")
@@ -143,7 +142,7 @@ class Raman_LR:
 		self.method = method
 
 		if self.method == 'LR':
-			from Xpect_2 import LR as meth
+			from Xpect_new import LR as meth
 
 		else:
 			raise KeyError("specified method unkown")
@@ -160,10 +159,10 @@ class Raman_LR:
 class ECD:
 	def __init__(self, method = 'RT', **kwargs):
 		if method == 'RT':
-			from Xpect_2 import RT_3 as meth
+			from Xpect_new import RT as meth
 
 		elif method == "LR":
-			from Xpect_2 import LR as meth
+			from Xpect_new import LR as meth
 
 		else:
 			raise KeyError("specified method unkown")

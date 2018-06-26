@@ -1,67 +1,30 @@
-#!/usr/bin/python3
-# import Xpect.Xpect as Xpect
-from Xpect_2 import Xtract
-# import Xtract
-# from . import Xtract
+from Xpect_new import Xtract
+from Xpect_new import convert_units as conv
 import numpy as np 
 from scipy import constants as const
 import re
-from Xpect_2 import XFT_2 as XFT
+from Xpect_new import XFT_2 as XFT
 import math
 
-def eV2f(x):
-	return x /const.h * const.e
-
-def f2eV(x):
-	return x * const.h/const.e
-
-def f2nu(x):
-	return x / (const.c*100)
-
-def f2nu_SI(x):
-	return x / const.c
-
-def ev2au(x):
-	return x * const.e  / const.value('Hartree energy') / (2*np.pi)
-
-def f2eV(x):
-	return x*const.h/const.e
-
-def debyetoau(x):
-	return 1/const.c / (const.value('Bohr radius')*const.e) *x*1e-21
-#	return const.c * (const.value('Bohr radius')*const.e) *x/1e-21
-
-def angstromtobohr(x):
-	return 1/(const.value('Bohr radius') *1e10) * x
-
-def bohrtoangstrom(x):
-	return const.value('Bohr radius') * 1e10 * x
-
-def polarizability_autoSI(x):
-	return const.e**2 * const.value('Bohr radius')**2 / const.value('Hartree energy') * x
-
-def polarizability_deriv_autoSI(x):
-	# return 1/(const.e**2 * const.value('Bohr radius')) * const.value('Hartree energy') * x
-	return const.e**2 * const.value('Bohr radius') / const.value('Hartree energy') * x
-
-
-
 def find_nearest(array,value):
-    idx = np.searchsorted(array, value, side="left")
-    if idx > 0 and (idx == len(array) or math.fabs(value - array[idx-1]) < math.fabs(value - array[idx])):
-        return idx-1, array[idx-1]
-    else:
-        return idx, array[idx]
+	"""
+	find nearest entry in a sorted array and return its index and value
+	"""
+	idx = np.searchsorted(array, value, side="left")
+	if idx > 0 and (idx == len(array) or math.fabs(value - array[idx-1]) < math.fabs(value - array[idx])):
+	    return idx-1, array[idx-1]
+	else:
+	    return idx, array[idx]
+
 
 def string2ts(string):						
 	"""
 	converts input string to SI float for different units of the timestep, e. g. '0.025 fs' --> 2.5e-17 [s]
 	"""
-	t_au = const.hbar / const.value('Hartree energy')
 	if string.find('fs') > 0:
-		timestep = float(re.findall("\d*\.\d+|\d+\.?\d*", string)[0]) * 1e-15 / t_au
+		timestep = conv.fs2au(float(re.findall("\d*\.\d+|\d+\.?\d*", string)[0]))
 	elif string.find('au') > 0:
-		timestep = float(re.findall("\d*\.\d+|\d+\.?\d*", string)[0]) # * t_au
+		timestep = float(re.findall("\d*\.\d+|\d+\.?\d*", string)[0])
 	else:
 		raise KeyError("units of timestep unknown")
 	return timestep
@@ -73,6 +36,7 @@ def shift2upperplane(spectrum):
 	spectrum_shift = np.vectorize(complex)(r*np.cos(phi),r*np.sin(phi))
 
 	return spectrum_shift
+
 
 def standardize_signals(args):
 	"""
@@ -90,6 +54,9 @@ def standardize_signals(args):
 			sig_y = Xtract.Xtract(path = args['files'][1], code = 'CP2K', properties = args['properties'] ).extract()
 			sig_z = Xtract.Xtract(path = args['files'][2], code = 'CP2K', properties = args['properties'] ).extract()
 
+			# print(sig_x)
+			# print(sig_y)
+			# print(sig_z)
 			if not sig_x.shape[1] == sig_y.shape[1] == sig_z.shape[1]:
 				print('The length of the different dipole signals do not match and will be adapted to the shortest: ')
 				min_length = min(sig_x.shape[1], sig_y.shape[1], sig_z.shape[1])
@@ -99,6 +66,7 @@ def standardize_signals(args):
 				sig_z = sig_z[:,:min_length,:]
 			else:
 				min_length = sig_x.shape[1]
+
 			# only return xx, yy, zz signals for just the calculation of the trace of the tensor 
 			if args['diag']:
 				data = np.swapaxes(np.dstack((sig_x[:,:,0], sig_y[:,:,1], sig_z[:,:,2])), 1, 2)
@@ -107,14 +75,10 @@ def standardize_signals(args):
 			else:
 				data = np.swapaxes(np.dstack((sig_x, sig_y, sig_z)), 1, 2)
 				
-
 		# one trajectory for trace of the tensor with (1,1,1) delta pulse
 		if len(args['files']) == 1:
 			p = Xtract.Xtract(path = args['files'][0], code = 'CP2K', properties = args['properties'] ).extract()
 			data = np.swapaxes(p, 1, 2)
-
-
-		return {i : data[index] for index, i in enumerate(args['properties'])}, min_length
 
 	elif args['code'] == 'NWC':
 		p = Xtract.Xtract(path = args['files'][0], code = 'NWC', properties = args['properties'] ).extract()
@@ -122,11 +86,45 @@ def standardize_signals(args):
 		# data = p
 		min_length = len(data) 
 		print(data)
-		return {i : data[index] for index, i in enumerate(args['properties'])}, min_length
-
 
 	else:
 		raise KeyError("Quantum chemistry code not implemented with RT-TDDFT yet")
+
+	return {i : data[index] for index, i in enumerate(args['properties'])}, min_length
+
+def standardize_signals_2(args):
+
+	sign = [Xtract.Xtract(path = i, code = args['code'], properties = args['properties'] ).extract() for i in args['files']]
+	# axes are [file, property, timestep, values (i.e. value or vector)]
+
+	min_length = len(sign[0][0])
+
+	# cut signals to have the same ammount of timesteps
+	if any(len(j) != min_length for i in sign for j in i):
+		print('The length of the different dipole signals do not match and will be adapted to the shortest: ')
+		min_length = min([len(j) for i in sign for j in i])
+		print(min_length)
+
+		sign_short = np.empty([len(sign), len(args['properties']), min_length, 3])
+		for i, prop in enumerate(sign):
+			for j, signal in enumerate(prop):
+				mask = [True if i < min_length else False for i in range(len(signal))]
+				sign_short[i][j] = signal[mask]
+		sign = sign_short
+
+	sign = np.asarray(sign)
+
+	if args['diag']:
+		data = np.swapaxes(np.dstack((sign[0,:, :,0], sign[1,:,:,1], sign[2,:,:,2])), 1, 2) 
+
+	else:
+		# data = np.swapaxes(sign, 1, 2)
+		data = np.swapaxes(np.dstack((sign[0,:, :,:], sign[1,:,:,:], sign[2,:,:,:])), 1, 2)		# now axes are [property, values(xx,xy,xz...), timestep]
+
+	# print(data.shape)
+
+	return {i : data[index] for index, i in enumerate(args['properties'])}, min_length
+
 
 def parse_ft_args(args, signal_length):
 	"""
@@ -152,12 +150,15 @@ def parse_ft_args(args, signal_length):
 	if 'pade_ws' not in args:
 		args['pade_ws'] = None
 
-
 	return args
 
 
 def diff_3(a, b, delta):
+	"""
+	Three point differentiantion formula [f(x+dx) - f(x-dx)]/2dx
+	"""
 	return (a - b)/float(2*delta)
+
 
 def pade(signal, length, timestep, freqs, single_point = False):			# Adapted from J. J. Goings' code (https://github.com/jjgoings/pade)
 	"""
@@ -186,14 +187,12 @@ def pade(signal, length, timestep, freqs, single_point = False):			# Adapted fro
 	p = np.poly1d(a)
 	q = np.poly1d(b)
 
-	
-	# print(W)
-	
 	if single_point:
 		return p, q
 	else:
 		W = np.exp(-1j * freqs * timestep * 2 * np.pi)
 		return p(W)/q(W)
+
 
 def gss(f, a, b, tol=np.finfo(float).eps):
     '''
@@ -225,20 +224,6 @@ def gss(f, a, b, tol=np.finfo(float).eps):
 
     return (b + a) / 2
 
-def integrate(x):
-    return np.cumsum(x)
-
-# def integrate2(x):
-#     return np.trapz(x)
-
-def indexrange(a, b, x):
-    index_list = []
-
-    for idx, value in enumerate(x):
-        if a < value < b:
-            index_list.append(idx)
-
-    return index_list
 
 ###################################################################################################
 #####	Read and FT-class for reading the signals and Fourier-transform them			      #####
@@ -249,11 +234,13 @@ class randft:
 		self.timestep = string2ts(args['ts'])
 		print('Timestep:\t', self.timestep, 'a. u.')
 
-		self.signals, self.signal_length = standardize_signals(args)
+		self.signals, self.signal_length = standardize_signals_2(args)
+		# self.stignals_test, self.signals_length_test = standardize_signals_2(args)
 
-		# get signal length
-		# self.signal_length = self.signals[args['properties'][0]].shape[1]
+		# print(self.signals, self.signal_length)
+		# print(self.stignals_test, self.signals_length_test)
 
+		# print(self.stignals_test['RT-edipole'] - self.signals['RT-edipole'])
 		# #get initial dipole moments
 		self.p_0 = {k : tuple(j[0] for j in self.signals[k]) for k in self.signals}
 
@@ -388,10 +375,10 @@ class absorption_2:
 		if kwargs['broadening'] is not None:
 			print('damping signal ...')
 			factor = np.exp(-(self.timestep*np.arange(ft_length)*float(kwargs['broadening'])))*self.timestep
-			signal = np.asarray([debyetoau(sig)*factor for sig in self.read.signals['RT-edipole'][:,start:stop]])
+			signal = np.asarray([conv.debye2au(sig)*factor for sig in self.read.signals['RT-edipole'][:,start:stop]])
 			self.signal_damped = signal
 		else:
-			signal = debyetoau(self.read.signals['RT-edipole'][:,start:stop])
+			signal = debye2au(self.read.signals['RT-edipole'][:,start:stop])
 
 		# do Fourier transform
 		# Real fast Fourier transform
@@ -408,9 +395,9 @@ class absorption_2:
 			print('Pade approximants...')
 			if isinstance(kwargs['pade_ws'], tuple):
 				self.single_point = False
-				w_start = ev2au(kwargs['pade_ws'][0])
-				w_stop = ev2au(kwargs['pade_ws'][1])
-				w_step = ev2au(kwargs['pade_ws'][2])
+				w_start = conv.ev2au(kwargs['pade_ws'][0])
+				w_stop = conv.ev2au(kwargs['pade_ws'][1])
+				w_step = conv.ev2au(kwargs['pade_ws'][2])
 				freq_pade = np.arange(w_start, w_stop, w_step)
 				self.frequencies = freq_pade *const.value('Hartree energy')/const.hbar
 				self.ft = tuple([pade(sig, ft_length, self.timestep, freq_pade, single_point = False) for sig in signal])
@@ -426,17 +413,17 @@ class absorption_2:
 	def spectrum(self, kwargs):
 		kappa = kwargs['kappa'] if 'kappa' in kwargs else float(1)
 		trace = shift2upperplane(np.asarray(self.ft).reshape((3, len(self.frequencies))))
-		return f2eV(self.frequencies), 4 * np.pi * self.frequencies / (3 * const.c * kappa) * np.imag(trace[0] + trace[1] + trace[2])
+		return conv.f2eV(self.frequencies), 4 * np.pi * self.frequencies / (3 * const.c * kappa) * np.imag(trace[0] + trace[1] + trace[2])
 
 	def _scan(self, w):
-		W = np.exp(-1j * ev2au(w) * self.timestep * 2 * np.pi)
+		W = np.exp(-1j * conv.ev2au(w) * self.timestep * 2 * np.pi)
 		trace = shift2upperplane([i(W)/j(W) for (i, j) in self.ft])
 
 		f = w*const.e/const.h 				# convert to Hz [SI]
 		return 4 * np.pi * f / (3 * const.c) * np.imag(trace[0] + trace[1] + trace[2])		
 
 	def mean_polarizability(self, w, kappa):
-		W = np.exp(-1j * ev2au(w) * self.timestep * 2 * np.pi)
+		W = np.exp(-1j * conv.ev2au(w) * self.timestep * 2 * np.pi)
 		alpha = np.asarray([i(W)/j(W) for (i, j) in self.ft])/kappa
 		return alpha
 
@@ -479,12 +466,12 @@ class Raman:
 		if kwargs['broadening'] is not None:
 			print('damping signal ...', kwargs['broadening'] ,' a. u.')
 			factor = np.exp(-(self.timestep*np.arange(ft_length)*float(kwargs['broadening'])))*self.timestep
-			signal_p = np.asarray([debyetoau(sig)*factor for sig in self.read_p.signals['RT-edipole'][:,start:stop]])
-			signal_m = np.asarray([debyetoau(sig)*factor for sig in self.read_m.signals['RT-edipole'][:,start:stop]])
+			signal_p = np.asarray([conv.debye2au(sig)*factor for sig in self.read_p.signals['RT-edipole'][:,start:stop]])
+			signal_m = np.asarray([conv.debye2au(sig)*factor for sig in self.read_m.signals['RT-edipole'][:,start:stop]])
 			self.signal_damped = signal_m
 		else:
-			signal_p = debyetoau(self.read_p.signals['RT-edipole'][:,start:stop])
-			signal_m = debyetoau(self.read_m.signals['RT-edipole'][:,start:stop])
+			signal_p = debye2au(self.read_p.signals['RT-edipole'][:,start:stop])
+			signal_m = debye2au(self.read_m.signals['RT-edipole'][:,start:stop])
 
 
 		# do Fourier transform
@@ -503,9 +490,9 @@ class Raman:
 			print('Pade approximants...')
 			if isinstance(kwargs['pade_ws'], tuple):
 				self.single_point = False
-				w_start = ev2au(kwargs['pade_ws'][0])
-				w_stop = ev2au(kwargs['pade_ws'][1])
-				w_step = ev2au(kwargs['pade_ws'][2])
+				w_start = conv.ev2au(kwargs['pade_ws'][0])
+				w_stop = conv.ev2au(kwargs['pade_ws'][1])
+				w_step = conv.ev2au(kwargs['pade_ws'][2])
 				freq_pade = np.arange(w_start, w_stop, w_step)
 				self.frequencies = freq_pade *const.value('Hartree energy')/const.hbar
 				self.ft_p = tuple([pade(sig, ft_length, self.timestep, freq_pade, single_point = False)/self.fieldstrength for sig in signal_p])
@@ -523,13 +510,13 @@ class Raman:
 	def deriv(self, diff, freq): 		# take derivative at a specific excitation frequency
 		if self.single_point:
 			# freq = 0.01 #!!!
-			W = np.exp(-1j * ev2au(freq) * self.timestep * 2 * np.pi)
-			self.resonancefreq =  eV2f(freq) 
+			W = np.exp(-1j * conv.ev2au(freq) * self.timestep * 2 * np.pi)
+			self.resonancefreq =  conv.eV2f(freq) 
 			self.a_p = np.asarray([i(W)/j(W)/self.fieldstrength for (i, j) in self.ft_p]).reshape((3,3))
 			self.a_m = np.asarray([i(W)/j(W)/self.fieldstrength for (i, j) in self.ft_m]).reshape((3,3))
 		else:
 			# get nearest discretized frequency to the excitation frequency
-			exc_freq_Hz = eV2f(freq)
+			exc_freq_Hz = conv.eV2f(freq)
 			index, self.resonancefreq = find_nearest(self.frequencies, exc_freq_Hz)
 			# print(index,self.resonancefreq)
 			self.a_p = np.asarray([i[index] for i in self.ft_p]).reshape((3,3))
@@ -539,14 +526,14 @@ class Raman:
 			# 	print('Due to the discrete signal the excitation frequency was shifted from', freq,'eV to', f2eV(self.resonancefreq), 'eV')
 		print('polarizability_p: ', self.a_p)
 		print('polarizability_m: ', self.a_m)
-		print('polarizability_m_SI: ', polarizability_autoSI(self.a_m))
+		print('polarizability_m_SI: ', conv.polarizability_au2SI(self.a_m))
 		print('mean polarizability_p: ', 1/3*(self.a_p[0,0] + self.a_p[1,1] + self.a_p[2,2]))
 		print('mean polarizability_m: ', 1/3*(self.a_m[0,0] + self.a_m[1,1] + self.a_m[2,2]))
 		print('difference: ', self.a_p - self.a_m)
 		print('diff', diff)
 		self.da = diff_3(self.a_p, self.a_m, diff)
 
-		self.da = polarizability_deriv_autoSI(self.da / np.sqrt(const.m_e/const.value('atomic mass constant')) ) / np.sqrt(const.m_e) #/(1e-10/const.value('Bohr radius')) 
+		self.da = conv.polarizability_deriv_au2SI(self.da / np.sqrt(const.m_e/const.value('atomic mass constant')) ) / np.sqrt(const.m_e) #/(1e-10/const.value('Bohr radius')) 
 		# /np.sqrt(const.m_e/const.value('atomic mass constant')) 		to convert denominator to atomic units <-- mass weighted coordinates are done using atomic mass units 1 u = const.value('atomic mass constant')
 		# /np.sqrt(const.m_e) 											to convert massweighted coordinates to SI units
 		# /(1e-10/const.value('Bohr radius'))							to convert to SI units, for the displacements units of angstrom were used
@@ -562,9 +549,9 @@ class Raman:
 		# gamma_k2 = 1/float(2) * ( (self.da[0,0] - self.da[1,1])**2 + (self.da[1,1] - self.da[2,2])**2 + (self.da[2,2] - self.da[0,0])**2  + 6 * ( self.da[0,1])**2 + self.da[1,2]**2 + self.da[2,0]**2  )
 
 		# print(f2nu(self.resonancefreq))
-		d_sigma = np.pi**2/(const.epsilon_0**2) * (f2nu_SI(self.resonancefreq) - nu_p*100)**4 * const.h / (8 * np.pi**2 * const.c * nu_p*100) * (45*ak**2 + 7 * gamma_k2)/45 * 1 / (1 - np.exp(- const.h * const.c * nu_p*100 / ( const.k * kwargs['T'] )))
+		d_sigma = np.pi**2/(const.epsilon_0**2) * (conv.f2nu_SI(self.resonancefreq) - nu_p*100)**4 * const.h / (8 * np.pi**2 * const.c * nu_p*100) * (45*ak**2 + 7 * gamma_k2)/45 * 1 / (1 - np.exp(- const.h * const.c * nu_p*100 / ( const.k * kwargs['T'] )))
 
-		return nu_p, d_sigma, f2eV(self.resonancefreq)
+		return nu_p, d_sigma, conv.f2eV(self.resonancefreq)
 
 ###################################################################################################
 #####		RT-TDDFT Excited state gradient method										      #####
@@ -582,7 +569,7 @@ class ESGM:
 		# return self.polys
 
 	def single_point(self, w):
-		W = np.exp(-1j * ev2au(w) * self.polarizability.timestep * 2 * np.pi)
+		W = np.exp(-1j * conv.ev2au(w) * self.polarizability.timestep * 2 * np.pi)
 		
 		trace = [i(W)/j(W) for (i, j) in self.polys]
 		# print(trace)
@@ -641,14 +628,14 @@ class ESGM_2:
 			raise KeyError('RT-ESGM is only possible with pade approximants, because the discrete FT has usually not enough points to resolve the excitation energies')
 
 	def scan_p(self, w):
-		W = np.exp(-1j * ev2au(w) * self.timestep * 2 * np.pi)
+		W = np.exp(-1j * conv.ev2au(w) * self.timestep * 2 * np.pi)
 		trace = shift2upperplane([i(W)/j(W)/self.fieldstrength for (i, j) in self.ft_p])
 
 		f = w*const.e/const.h 				# convert to Hz [SI]
 		return 4 * np.pi * f / (3 * const.c) * np.imag(trace[0] + trace[1] + trace[2])		
 	
 	def scan_m(self, w):
-		W = np.exp(-1j * ev2au(w) * self.timestep * 2 * np.pi)
+		W = np.exp(-1j * conv.ev2au(w) * self.timestep * 2 * np.pi)
 		trace = shift2upperplane([i(W)/j(W)/self.fieldstrength for (i, j) in self.ft_m])
 
 		f = w*const.e/const.h 				# convert to Hz [SI]
@@ -721,7 +708,7 @@ if __name__ == "__main__":
 	# plt.savefig('/home/jmatti/projects/output/art.pdf', format = 'pdf')
 	# plt.show()
 
-	print(debyetoau(1))
+	print(debye2au(1))
 	print(angstromtobohr(1))
 	print(bohrtoangstrom(1))
 	print(polarizability_autoSI(1))

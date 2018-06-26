@@ -1,5 +1,4 @@
-#!/usr/bin/python3
-from Xpect_2 import Xtract
+from Xpect_new import Xtract
 
 # return (excitation_energy, oscillator_strength) independent of the quantum chemistry code
 def standardize_data(args):

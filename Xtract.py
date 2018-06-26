@@ -1,6 +1,4 @@
-#!/usr/bin/python3
-from Xpect_2 import regex
-# import regex
+from Xpect_new import regex
 import os
 import numpy as np
 import mmap
