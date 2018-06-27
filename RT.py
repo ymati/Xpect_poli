@@ -39,60 +39,10 @@ def shift2upperplane(spectrum):
 
 
 def standardize_signals(args):
-	"""
-	for each property returns:
-	   xx, xy, xz, yx, yy, yz, zx, zy, zz the first index denoting the perturbation direction, the second the observation direction
-	or xx, yy, zz if only the diagonal of the tensor is needed
-	"""
-	args['diag'] = False if not 'diag' in args else args['diag']
 
-	if args['code'] == 'CP2K':
-		# three dipole trajectories for full tensor
-		print('reading data files')
-		if len(args['files']) == 3:
-			sig_x = Xtract.Xtract(path = args['files'][0], code = 'CP2K', properties = args['properties'] ).extract()
-			sig_y = Xtract.Xtract(path = args['files'][1], code = 'CP2K', properties = args['properties'] ).extract()
-			sig_z = Xtract.Xtract(path = args['files'][2], code = 'CP2K', properties = args['properties'] ).extract()
-
-			# print(sig_x)
-			# print(sig_y)
-			# print(sig_z)
-			if not sig_x.shape[1] == sig_y.shape[1] == sig_z.shape[1]:
-				print('The length of the different dipole signals do not match and will be adapted to the shortest: ')
-				min_length = min(sig_x.shape[1], sig_y.shape[1], sig_z.shape[1])
-				print(min_length)
-				sig_x = sig_x[:,:min_length,:]
-				sig_y = sig_y[:,:min_length,:]
-				sig_z = sig_z[:,:min_length,:]
-			else:
-				min_length = sig_x.shape[1]
-
-			# only return xx, yy, zz signals for just the calculation of the trace of the tensor 
-			if args['diag']:
-				data = np.swapaxes(np.dstack((sig_x[:,:,0], sig_y[:,:,1], sig_z[:,:,2])), 1, 2)
-
-			# # return all signals for full tensor calculation
-			else:
-				data = np.swapaxes(np.dstack((sig_x, sig_y, sig_z)), 1, 2)
-				
-		# one trajectory for trace of the tensor with (1,1,1) delta pulse
-		if len(args['files']) == 1:
-			p = Xtract.Xtract(path = args['files'][0], code = 'CP2K', properties = args['properties'] ).extract()
-			data = np.swapaxes(p, 1, 2)
-
-	elif args['code'] == 'NWC':
-		p = Xtract.Xtract(path = args['files'][0], code = 'NWC', properties = args['properties'] ).extract()
-		data = np.swapaxes(p, 1, 2)
-		# data = p
-		min_length = len(data) 
-		print(data)
-
-	else:
+	if args['code'] not in ["CP2K", "NWC"]:
 		raise KeyError("Quantum chemistry code not implemented with RT-TDDFT yet")
-
-	return {i : data[index] for index, i in enumerate(args['properties'])}, min_length
-
-def standardize_signals_2(args):
+	print('reading data files...')
 
 	sign = [Xtract.Xtract(path = i, code = args['code'], properties = args['properties'] ).extract() for i in args['files']]
 	# axes are [file, property, timestep, values (i.e. value or vector)]
@@ -113,15 +63,12 @@ def standardize_signals_2(args):
 		sign = sign_short
 
 	sign = np.asarray(sign)
-
+	
 	if args['diag']:
 		data = np.swapaxes(np.dstack((sign[0,:, :,0], sign[1,:,:,1], sign[2,:,:,2])), 1, 2) 
 
 	else:
-		# data = np.swapaxes(sign, 1, 2)
 		data = np.swapaxes(np.dstack((sign[0,:, :,:], sign[1,:,:,:], sign[2,:,:,:])), 1, 2)		# now axes are [property, values(xx,xy,xz...), timestep]
-
-	# print(data.shape)
 
 	return {i : data[index] for index, i in enumerate(args['properties'])}, min_length
 
@@ -234,14 +181,9 @@ class randft:
 		self.timestep = string2ts(args['ts'])
 		print('Timestep:\t', self.timestep, 'a. u.')
 
-		self.signals, self.signal_length = standardize_signals_2(args)
-		# self.stignals_test, self.signals_length_test = standardize_signals_2(args)
+		self.signals, self.signal_length = standardize_signals(args)
 
-		# print(self.signals, self.signal_length)
-		# print(self.stignals_test, self.signals_length_test)
-
-		# print(self.stignals_test['RT-edipole'] - self.signals['RT-edipole'])
-		# #get initial dipole moments
+		# get initial dipole moments
 		self.p_0 = {k : tuple(j[0] for j in self.signals[k]) for k in self.signals}
 
 		# center signals
