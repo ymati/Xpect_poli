@@ -64,11 +64,17 @@ def standardize_signals(args):
 
 	sign = np.asarray(sign)
 	
-	if args['diag']:
-		data = np.swapaxes(np.dstack((sign[0,:, :,0], sign[1,:,:,1], sign[2,:,:,2])), 1, 2) 
+	if len(args['files']) == 3:
+		if args['diag']:
+			data = np.swapaxes(np.dstack((sign[0,:, :,0], sign[1,:,:,1], sign[2,:,:,2])), 1, 2) 
 
+		else:
+			data = np.swapaxes(np.dstack((sign[0,:, :,:], sign[1,:,:,:], sign[2,:,:,:])), 1, 2)		# now axes are [property, values(xx,xy,xz...), timestep]
 	else:
-		data = np.swapaxes(np.dstack((sign[0,:, :,:], sign[1,:,:,:], sign[2,:,:,:])), 1, 2)		# now axes are [property, values(xx,xy,xz...), timestep]
+		print(sign.shape)
+		sign.shape=(1,min_length,3)
+		data = np.swapaxes(sign, 1, 2)
+		print(data.shape)
 
 	return {i : data[index] for index, i in enumerate(args['properties'])}, min_length
 
@@ -271,6 +277,62 @@ class beta(randft):
 #		1j * const.c /  self.frequencies[1:] *self.b_diag[:,1:]
 
 
+class FT(randft):
+	def __init__(self, kwargs):
+		kwargs_read = {'ts' : kwargs['ts'], 'code' : kwargs['code'], 'files' : kwargs['files'], 'diag' : False, 'properties' : ('RT-edipole', ) } 
+
+		self.read = randft(kwargs_read)
+
+		self.timestep = self.read.timestep
+		self.signal_length = self.read.signal_length
+
+	def get_polarizabilities(self, kwargs):
+		ft_args = parse_ft_args(kwargs, self.signal_length)
+		start = ft_args['start']
+		stop = ft_args['stop']
+		ft_length = stop - start
+
+		# damping the signal
+		if kwargs['broadening'] is not None:
+			print('damping signal ...')
+			factor = np.exp(-(self.timestep*np.arange(ft_length)*float(kwargs['broadening'])))*self.timestep
+			signal = np.asarray([conv.debye2au(sig)*factor for sig in self.read.signals['RT-edipole'][:,start:stop]])
+			self.signal_damped = signal
+		else:
+			signal = debye2au(self.read.signals['RT-edipole'][:,start:stop])
+
+		# do Fourier transform
+		# Real fast Fourier transform
+		if kwargs['FT_method'] == 'rfft':
+			print('rfft ...')
+			self.single_point = False
+			# print(self.timestep)
+			# print(ft_length)
+			self.frequencies = np.fft.rfftfreq(ft_length, self.timestep)*const.value('Hartree energy')/const.hbar
+			self.ft = [np.fft.rfft(sig) for sig in signal]
+
+		# Pade approximation
+		elif kwargs['FT_method'] == 'pade':
+			print('Pade approximants...')
+			if isinstance(kwargs['pade_ws'], tuple):
+				self.single_point = False
+				w_start = conv.ev2au(kwargs['pade_ws'][0])
+				w_stop = conv.ev2au(kwargs['pade_ws'][1])
+				w_step = conv.ev2au(kwargs['pade_ws'][2])
+				freq_pade = np.arange(w_start, w_stop, w_step)
+				self.frequencies = freq_pade *const.value('Hartree energy')/const.hbar
+				self.ft = tuple([pade(sig, ft_length, self.timestep, freq_pade, single_point = False) for sig in signal])
+				# print('tuple')
+
+			else:
+				self.single_point = True
+				self.ft = tuple([pade(sig, ft_length, self.timestep, 0, single_point = True) for sig in signal])
+
+		else:
+			raise KeyError('FT-method unknown')
+
+	def FT(self, kwargs):
+		return self.frequencies, np.real(self.ft), np.imag(self.ft)
 
 ###################################################################################################
 #####				Spectrum classes: have a spectrum method that returns (\omega, S)	      #####
