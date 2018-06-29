@@ -38,6 +38,19 @@ class absorption_RT:
 	def mean_polarizability(self, w, kappa):
 		return self.spec.mean_polarizability(w, kappa)
 
+
+class FT:
+	def __init__(self, method = 'RT', **kwargs):
+		from Xpect_new import RT as meth
+		self.spec = meth.FT(kwargs)
+
+	def get_polarizabilities(self, **kwargs):
+		return self.spec.get_polarizabilities(kwargs)
+
+	def FT(self, **kwargs):
+		return self.spec.FT(kwargs)
+
+
 class Raman_RT:
 	"""
 	Real time Raman spectra
