@@ -2,26 +2,10 @@ import numpy as np
 from scipy import constants as const 
 
 
-class absorption:
-	def __init__(self, method = 'RT', **kwargs):
-		if method == 'RT':
-			from Xpect_new import RT as meth
-
-		elif method == "LR":
-			from Xpect_new import LR as meth
-
-		else:
-			raise KeyError("specified method unkown")
-
-		self.spec = meth.absorption(kwargs)
-
-	def spectrum(self, **kwargs):
-		return self.spec.spectrum(kwargs)
-
 class absorption_RT:
 	def __init__(self, method = 'RT', **kwargs):
 		from Xpect_new import RT as meth
-		self.spec = meth.absorption_2(kwargs)
+		self.spec = meth.absorption(kwargs)
 
 	def get_polarizabilities(self, **kwargs):
 		return self.spec.get_polarizabilities(kwargs)
@@ -49,6 +33,9 @@ class FT:
 
 	def FT(self, **kwargs):
 		return self.spec.FT(kwargs)
+
+	def dipole_moment(self):
+		return self.spec.signal
 
 
 class Raman_RT:
