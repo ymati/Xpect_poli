@@ -199,44 +199,15 @@ class randft:
 			for index, trajectory in enumerate(self.signals[k]):
 				self.signals[k][index] = trajectory - trajectory[0]
 
-	def ft(self, kwargs):
-		# print(self.signal_length, 'ft')
-		ft_args = parse_ft_args(kwargs, self.signal_length)
-		start = ft_args['start']
-		stop = ft_args['stop']
-
-		# dim = self.signals[kwargs['property']].shape[0]
-
-		signals = self.signals[kwargs['property']]
-
-		if ft_args['FT_method'] is not 'pade_poly':
-			FT = XFT.Fourier(signals[:,start:stop], self.timestep, method = ft_args['FT_method'], broadening = ft_args['broadening'], ws = ft_args['pade_ws'])
-			# convert frequencies from a. u. to Hz 
-			yield next(FT)*const.value('Hartree energy')/const.hbar
-
-		else:
-
-			FT = XFT.Fourier(signals[:,start:stop], self.timestep, method = 'pade_poly', broadening = ft_args['broadening'], ws = ft_args['pade_ws'])
-			yield next(FT) # empty frequency value
-		# frequencies = next(FT)*const.value('Hartree energy')/const.hbar
-		
-
-		# spectrum = np.asarray([i for i in FT])
-		if ft_args['FT_method'] is not 'pade_poly':
-			yield np.asarray([i for i in FT])
-		else:
-			yield [i for i in FT]
-		# return frequencies, spectrum
-
 	@staticmethod
 	def FT_unified(signal, timestep, kwargs):
+		ft_length = kwargs['stop'] - kwargs['start']
 		if kwargs['FT_method'] == 'rfft':
 			print('rfft ...')
 			single_point = False
-			# print(self.timestep)
-			# print(ft_length)
-			frequencies = np.fft.rfftfreq(kwargs['ft_length'], timestep)*const.value('Hartree energy')/const.hbar
-			ft = [np.fft.rfft(sig) for sig in signal]
+
+			frequencies = np.fft.rfftfreq(ft_length, timestep)*const.value('Hartree energy')/const.hbar
+			ft = [-np.fft.rfft(sig) for sig in signal]
 
 		# Pade approximation
 		elif kwargs['FT_method'] == 'pade':
@@ -248,68 +219,33 @@ class randft:
 				w_step = conv.ev2au(kwargs['pade_ws'][2])
 				freq_pade = np.arange(w_start, w_stop, w_step)
 				frequencies = freq_pade *const.value('Hartree energy')/const.hbar
-				ft = tuple([pade(sig, kwargs['ft_length'], timestep, freq_pade, single_point = single_point) for sig in signal])
+				ft = tuple([pade(sig, ft_length, timestep, freq_pade, single_point = single_point) for sig in signal])
 				# print('tuple')
 
 			else:
 				single_point = True
 				frequencies = []
-				ft = tuple([pade(sig, kwargs['ft_length'], self.timestep, 0, single_point = single_point) for sig in signal])
+				ft = tuple([pade(sig, ft_length, timestep, 0, single_point = single_point) for sig in signal])
 
 		else:
 			raise KeyError("FT_method not known or misspelled. Currently: rfft, pade")
 
 		return frequencies, ft, single_point
 
+	@staticmethod
+	def damping_signal(signal_read, timestep, kwargs):
+		ft_length = kwargs['stop'] - kwargs['start']
+		if kwargs['broadening'] is not None:
+			print('damping signal ...')
+			factor = np.exp(-(timestep*np.arange(ft_length)*float(kwargs['broadening'])))*timestep 						# * timestep already for the FT
+			signal = np.asarray([conv.debye2au(sig)*factor for sig in signal_read[:,kwargs['start']:kwargs['stop']]])
+		else:
+			signal = debye2au(signal_read[:,kwargs['start']:kwargs['stop']])
+		return signal
 
 ###################################################################################################
-#####				property classes: calculate properties from FT-transformed signals		  #####
+#####				Peform Fourier transfrom of the el. dipole signal 						  #####
 ###################################################################################################
-
-class polarizability(randft):
-	def __init__(self, kwargs):
-		self.prop = 'RT-edipole'
-		self.diag = kwargs['diag']
-		kwargs['properties'] = (self.prop, )
-		super().__init__(kwargs)
-		# print("V2")
-
-
-	def tensor(self, kwargs):
-		kwargs['property'] = self.prop
-		kwargs['kappa'] = float(1)
-
-		f, FT = self.ft(kwargs)
-		if self.diag:
-			if kwargs['FT_method'] == 'pade_poly':
-				return f, FT
-			else:			
-				return f, FT.reshape((3, len(f)))/kwargs['kappa']
-		else:
-			if kwargs['FT_method'] == 'pade_poly':
-				return f, FT.reshape((3,2,1))
-			else:
-				return f, FT.reshape((3, 3, len(f)))/kwargs['kappa']
-
-class beta(randft):
-	def __init__(self, kwargs):
-		self.prop = 'RT-mdipole'
-		self.diag = kwargs['diag']
-		kwargs['properties'] = (self.prop, )
-		super().__init__(kwargs)
-
-	def tensor(self, kwargs):
-		kwargs['property'] = self.prop
-		kwargs['kappa'] = float(1)
-
-		f, FT = self.ft(kwargs)
-		if self.diag:			
-			return f[1:], 1j * const.c /  f[1:] * FT.reshape((3, len(f)))[:,1:]/kwargs['kappa']
-		else:
-			return f[1:], 1j * const.c /  f[1:] * FT.reshape((3, 3, len(f)))[:,:,1:]/kwargs['kappa']
-
-#		1j * const.c /  self.frequencies[1:] *self.b_diag[:,1:]
-
 
 class FT():
 	def __init__(self, kwargs):
@@ -322,79 +258,23 @@ class FT():
 
 	def get_polarizabilities(self, kwargs):
 		ft_args = parse_ft_args(kwargs, self.signal_length)
-		start = ft_args['start']
-		stop = ft_args['stop']
-		ft_length = stop - start
-		
-		# damping the signal
-		if kwargs['broadening'] is not None:
-			print('damping signal ...')
-			factor = np.exp(-(self.timestep*np.arange(ft_length)*float(kwargs['broadening'])))*self.timestep
-			signal = np.asarray([conv.debye2au(sig)*factor for sig in self.read.signals['RT-edipole'][:,start:stop]])
-			self.signal_damped = signal
-		else:
-			signal = debye2au(self.read.signals['RT-edipole'][:,start:stop])
 
-		# do Fourier transform
-		# Real fast Fourier transform
-		if kwargs['FT_method'] == 'rfft':
-			print('rfft ...')
-			self.single_point = False
-			# print(self.timestep)
-			# print(ft_length)
-			self.frequencies = np.fft.rfftfreq(ft_length, self.timestep)*const.value('Hartree energy')/const.hbar
-			self.ft = [np.fft.rfft(sig) for sig in signal]
+		# damp signal
+		self.signal = self.read.damping_signal(self.read.signals['RT-edipole'], self.timestep, ft_args)
 
-		# Pade approximation
-		elif kwargs['FT_method'] == 'pade':
-			print('Pade approximants...')
-			if isinstance(kwargs['pade_ws'], tuple):
-				self.single_point = False
-				w_start = conv.ev2au(kwargs['pade_ws'][0])
-				w_stop = conv.ev2au(kwargs['pade_ws'][1])
-				w_step = conv.ev2au(kwargs['pade_ws'][2])
-				freq_pade = np.arange(w_start, w_stop, w_step)
-				self.frequencies = freq_pade *const.value('Hartree energy')/const.hbar
-				self.ft = tuple([pade(sig, ft_length, self.timestep, freq_pade, single_point = False) for sig in signal])
-				# print('tuple')
+		# do FT either with FFT or Pade
+		self.frequencies, self.ft, self.sp = self.read.FT_unified(self.signal, self.timestep, ft_args)
 
-			else:
-				self.single_point = True
-				self.ft = tuple([pade(sig, ft_length, self.timestep, 0, single_point = True) for sig in signal])
-
-		else:
-			raise KeyError('FT-method unknown')
 
 	def FT(self, kwargs):
 		return self.frequencies, np.real(self.ft), np.imag(self.ft) #, self.signal_damped
+
 
 ###################################################################################################
 #####				Spectrum classes: have a spectrum method that returns (\omega, S)	      #####
 ###################################################################################################
 
 class absorption:
-	def __init__(self, kwargs):
-		kwargs['diag'] = True
-		self.polarizability = polarizability(kwargs)
-
-	def spectrum(self, kwargs):
-		freq, trace = self.polarizability.tensor(kwargs)
-		# print(freq, trace)
-		# if not kwargs["FT_method"] == 'pade_poly':
-		trace = shift2upperplane(trace)
-		return freq, 4 * np.pi * freq / (3 * const.c) * np.imag(trace[0] + trace[1] + trace[2])
-
-
-class ECD:
-	def __init__(self, kwargs):
-		kwargs['diag'] = True
-		self.beta = beta(kwargs)
-
-	def spectrum(self, kwargs):
-		freq, trace = self.beta.tensor(kwargs)
-		return freq, 3 * freq / ( np.pi * const.c) * np.imag(trace[0] + trace[1] + trace[2])
-
-class absorption_2:
 	def __init__(self, kwargs):
 		kwargs_read = {'ts' : kwargs['ts'], 'code' : kwargs['code'], 'files' : kwargs['files'], 'diag' : True, 'properties' : ('RT-edipole', ) } 
 
@@ -405,59 +285,23 @@ class absorption_2:
 
 	def get_polarizabilities(self, kwargs):
 		ft_args = parse_ft_args(kwargs, self.signal_length)
-		start = ft_args['start']
-		stop = ft_args['stop']
-		ft_length = stop - start
-		ft_args['ft_length'] = ft_length
-		# damping the signal
-		if kwargs['broadening'] is not None:
-			print('damping signal ...')
-			factor = np.exp(-(self.timestep*np.arange(ft_length)*float(kwargs['broadening'])))*self.timestep
-			signal = np.asarray([conv.debye2au(sig)*factor for sig in self.read.signals['RT-edipole'][:,start:stop]])
-			self.signal_damped = signal
-		else:
-			signal = debye2au(self.read.signals['RT-edipole'][:,start:stop])
 
-		# do Fourier transform
+		# damp signal
+		self.signal = self.read.damping_signal(self.read.signals['RT-edipole'], self.timestep, ft_args)
 
-		self.frequencies, self.ft, self.sp = self.read.FT_unified(signal, self.timestep, ft_args)
-		# Real fast Fourier transform
-		# if kwargs['FT_method'] == 'rfft':
-		# 	print('rfft ...')
-		# 	self.single_point = False
-		# 	# print(self.timestep)
-		# 	# print(ft_length)
-		# 	self.frequencies = np.fft.rfftfreq(ft_length, self.timestep)*const.value('Hartree energy')/const.hbar
-		# 	self.ft = [np.fft.rfft(sig) for sig in signal]
+		# do FT either with FFT or Pade
+		self.frequencies, self.ft, self.sp = self.read.FT_unified(self.signal, self.timestep, ft_args)
 
-		# # Pade approximation
-		# elif kwargs['FT_method'] == 'pade':
-		# 	print('Pade approximants...')
-		# 	if isinstance(kwargs['pade_ws'], tuple):
-		# 		self.single_point = False
-		# 		w_start = conv.ev2au(kwargs['pade_ws'][0])
-		# 		w_stop = conv.ev2au(kwargs['pade_ws'][1])
-		# 		w_step = conv.ev2au(kwargs['pade_ws'][2])
-		# 		freq_pade = np.arange(w_start, w_stop, w_step)
-		# 		self.frequencies = freq_pade *const.value('Hartree energy')/const.hbar
-		# 		self.ft = tuple([pade(sig, ft_length, self.timestep, freq_pade, single_point = False) for sig in signal])
-		# 		# print('tuple')
-
-		# 	else:
-		# 		self.single_point = True
-		# 		self.ft = tuple([pade(sig, ft_length, self.timestep, 0, single_point = True) for sig in signal])
-
-		# else:
-		# 	raise KeyError('FT-method unknown')		
 
 	def spectrum(self, kwargs):
 		kappa = kwargs['kappa'] if 'kappa' in kwargs else float(1)
-		trace = shift2upperplane(np.asarray(self.ft).reshape((3, len(self.frequencies))))
+		trace = np.asarray(self.ft).reshape((3, len(self.frequencies)))
 		return conv.f2eV(self.frequencies), 4 * np.pi * self.frequencies / (3 * const.c * kappa) * np.imag(trace[0] + trace[1] + trace[2])
 
 	def _scan(self, w):
 		W = np.exp(-1j * conv.ev2au(w) * self.timestep * 2 * np.pi)
-		trace = shift2upperplane([i(W)/j(W) for (i, j) in self.ft])
+
+		trace = [i(W)/j(W) for (i, j) in self.ft]
 
 		f = w*const.e/const.h 				# convert to Hz [SI]
 		return 4 * np.pi * f / (3 * const.c) * np.imag(trace[0] + trace[1] + trace[2])		
