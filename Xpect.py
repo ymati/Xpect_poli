@@ -117,7 +117,7 @@ class ESGM_RT:
 		else:
 			raise KeyError("specified method unkown")
 
-		self.spec = meth.ESGM_2(kwargs)
+		self.spec = meth.ESGM(kwargs)
 
 	def get_polarizabilities(self, **kwargs):
 		return self.spec.get_polarizabilities(kwargs)
