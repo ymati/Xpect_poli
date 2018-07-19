@@ -29,15 +29,6 @@ def string2ts(string):
 		raise KeyError("units of timestep unknown")
 	return timestep
 
-def shift2upperplane(spectrum):
-	r = np.sqrt(np.real(spectrum)**2 + np.imag(spectrum)**2)
-	phi = np.abs(np.arctan2(np.imag(spectrum), np.real(spectrum)))
-
-	spectrum_shift = np.vectorize(complex)(r*np.cos(phi),r*np.sin(phi))
-
-	return spectrum_shift
-
-
 def standardize_signals(args):
 
 	if args['code'] not in ["CP2K", "NWC"]:
@@ -48,6 +39,7 @@ def standardize_signals(args):
 	# axes are [file, property, timestep, values (i.e. value or vector)]
 
 	min_length = len(sign[0][0])
+	print(min_length)
 
 	# cut signals to have the same ammount of timesteps
 	if any(len(j) != min_length for i in sign for j in i):
@@ -271,7 +263,7 @@ class FT():
 
 
 ###################################################################################################
-#####				Spectrum classes: have a spectrum method that returns (\omega, S)	      #####
+#####				Absorption spectrum and some usuful tools							      #####
 ###################################################################################################
 
 class absorption:
@@ -327,77 +319,34 @@ class Raman:
 		self.read_p = randft(kwargs_p)   		# read in dipole signals for geometry displaced along positive normal mode direction
 		self.read_m = randft(kwargs_m)     		# read in dipole signals for geometry displaced along negative normal mode direction
 
-		# print(self.read_p.signals)
-		# print(self.read_m.signals)
-
 		self.timestep = self.read_p.timestep
 		self.signal_length = min(self.read_p.signal_length, self.read_m.signal_length)
 
 	def get_polarizabilities(self, kwargs):
 		ft_args = parse_ft_args(kwargs, self.signal_length)
-		start = ft_args['start']
-		stop = ft_args['stop']
-		ft_length = stop - start
 
 		if 'fieldstrength' in kwargs:
 			self.fieldstrength = kwargs['fieldstrength']
 		else:
 			self.fieldstrength = 1
+			print('fieldstrength was set to 1 [au]')
 
-		print('fieldstrength [a. u.]:', self.fieldstrength)
+		# damp signal
+		signal_p = self.read_p.damping_signal(self.read_p.signals['RT-edipole'], self.timestep, ft_args)
+		signal_m = self.read_m.damping_signal(self.read_m.signals['RT-edipole'], self.timestep, ft_args)
 
-		# damping the signal
-		if kwargs['broadening'] is not None:
-			print('damping signal ...', kwargs['broadening'] ,' a. u.')
-			factor = np.exp(-(self.timestep*np.arange(ft_length)*float(kwargs['broadening'])))*self.timestep
-			signal_p = np.asarray([conv.debye2au(sig)*factor for sig in self.read_p.signals['RT-edipole'][:,start:stop]])
-			signal_m = np.asarray([conv.debye2au(sig)*factor for sig in self.read_m.signals['RT-edipole'][:,start:stop]])
-			self.signal_damped = signal_m
-		else:
-			signal_p = debye2au(self.read_p.signals['RT-edipole'][:,start:stop])
-			signal_m = debye2au(self.read_m.signals['RT-edipole'][:,start:stop])
-
-
-		# do Fourier transform
-		# Real fast Fourier transform
-		if kwargs['FT_method'] == 'rfft':
-			print('rfft ...')
-			self.single_point = False
-			# print(self.timestep)
-			# print(ft_length)
-			self.frequencies = np.fft.rfftfreq(ft_length, self.timestep)*const.value('Hartree energy')/const.hbar
-			self.ft_p = [np.fft.rfft(sig_p)/self.fieldstrength for sig_p in signal_p]
-			self.ft_m = [np.fft.rfft(sig_m)/self.fieldstrength for sig_m in signal_m]
-
-		# Pade approximation
-		elif kwargs['FT_method'] == 'pade':
-			print('Pade approximants...')
-			if isinstance(kwargs['pade_ws'], tuple):
-				self.single_point = False
-				w_start = conv.ev2au(kwargs['pade_ws'][0])
-				w_stop = conv.ev2au(kwargs['pade_ws'][1])
-				w_step = conv.ev2au(kwargs['pade_ws'][2])
-				freq_pade = np.arange(w_start, w_stop, w_step)
-				self.frequencies = freq_pade *const.value('Hartree energy')/const.hbar
-				self.ft_p = tuple([pade(sig, ft_length, self.timestep, freq_pade, single_point = False)/self.fieldstrength for sig in signal_p])
-				self.ft_m = tuple([pade(sig, ft_length, self.timestep, freq_pade, single_point = False)/self.fieldstrength for sig in signal_m])
-				# print('tuple')
-
-			else:
-				self.single_point = True
-				self.ft_p = tuple([pade(sig, ft_length, self.timestep, 0, single_point = True) for sig in signal_p])
-				self.ft_m = tuple([pade(sig, ft_length, self.timestep, 0, single_point = True) for sig in signal_m])
-
-		else:
-			raise KeyError('FT-method unknown')
+		# do FT 
+		self.frequencies, self.ft_p, self.single_point = self.read_p.FT_unified(signal_p, self.timestep, ft_args)
+		frequencies_m, self.ft_m, sp = self.read_m.FT_unified(signal_m, self.timestep, ft_args)
+		
 
 	def deriv(self, diff, freq): 		# take derivative at a specific excitation frequency
-		if self.single_point:
-			# freq = 0.01 #!!!
+		if self.single_point:			
 			W = np.exp(-1j * conv.ev2au(freq) * self.timestep * 2 * np.pi)
 			self.resonancefreq =  conv.eV2f(freq) 
 			self.a_p = np.asarray([i(W)/j(W)/self.fieldstrength for (i, j) in self.ft_p]).reshape((3,3))
 			self.a_m = np.asarray([i(W)/j(W)/self.fieldstrength for (i, j) in self.ft_m]).reshape((3,3))
+
 		else:
 			# get nearest discretized frequency to the excitation frequency
 			exc_freq_Hz = conv.eV2f(freq)
@@ -406,34 +355,40 @@ class Raman:
 			self.a_p = np.asarray([i[index] for i in self.ft_p]).reshape((3,3))
 			self.a_m = np.asarray([i[index] for i in self.ft_m]).reshape((3,3))
 				
-			# if np.abs(self.resonancefreq - exc_freq_Hz) > 1e10:
-			# 	print('Due to the discrete signal the excitation frequency was shifted from', freq,'eV to', f2eV(self.resonancefreq), 'eV')
-		print('polarizability_p: ', self.a_p)
-		print('polarizability_m: ', self.a_m)
-		print('polarizability_m_SI: ', conv.polarizability_au2SI(self.a_m))
-		print('mean polarizability_p: ', 1/3*(self.a_p[0,0] + self.a_p[1,1] + self.a_p[2,2]))
-		print('mean polarizability_m: ', 1/3*(self.a_m[0,0] + self.a_m[1,1] + self.a_m[2,2]))
-		print('difference: ', self.a_p - self.a_m)
-		print('diff', diff)
+
+
+		# print('polarizability_p: ', self.a_p)
+		# print('polarizability_m: ', self.a_m)
+		# print('polarizability_m_SI: ', conv.polarizability_au2SI(self.a_m))
+		# print('mean polarizability_p: ', 1/3*(self.a_p[0,0] + self.a_p[1,1] + self.a_p[2,2]))
+		# print('mean polarizability_m: ', 1/3*(self.a_m[0,0] + self.a_m[1,1] + self.a_m[2,2]))
+		# print('difference: ', self.a_p - self.a_m)
+		# print('diff', diff)
 		self.da = diff_3(self.a_p, self.a_m, diff)
 
-		self.da = conv.polarizability_deriv_au2SI(self.da / np.sqrt(const.m_e/const.value('atomic mass constant')) ) / np.sqrt(const.m_e) #/(1e-10/const.value('Bohr radius')) 
-		# /np.sqrt(const.m_e/const.value('atomic mass constant')) 		to convert denominator to atomic units <-- mass weighted coordinates are done using atomic mass units 1 u = const.value('atomic mass constant')
-		# /np.sqrt(const.m_e) 											to convert massweighted coordinates to SI units
-		# /(1e-10/const.value('Bohr radius'))							to convert to SI units, for the displacements units of angstrom were used
+		self.da_SI = conv.polarizability_deriv_au2SI(self.da / np.sqrt(const.m_e/const.value('atomic mass constant')) ) / np.sqrt(const.m_e)  # convert to SI units and account for mass-weighted coordinates
+
 		print(self.da)
 
 
 	def intensity(self, kwargs):
 		nu_p = kwargs['nu_p']
 
-		ak = 1/float(3) * np.abs( self.da[0,0] + self.da[1,1] + self.da[2,2])
+		# ak = 1/float(3) * np.abs( self.da[0,0] + self.da[1,1] + self.da[2,2])
 
-		gamma_k2 = 1/float(2) * ( np.abs(self.da[0,0] - self.da[1,1])**2 + np.abs(self.da[1,1] - self.da[2,2])**2 + np.abs(self.da[2,2] - self.da[0,0])**2  + 6 * ( np.abs(self.da[0,1])**2 + np.abs(self.da[1,2])**2 + np.abs(self.da[2,0])**2 ) )
-		# gamma_k2 = 1/float(2) * ( (self.da[0,0] - self.da[1,1])**2 + (self.da[1,1] - self.da[2,2])**2 + (self.da[2,2] - self.da[0,0])**2  + 6 * ( self.da[0,1])**2 + self.da[1,2]**2 + self.da[2,0]**2  )
+		# gamma_k2 = 1/float(2) * ( np.abs(self.da[0,0] - self.da[1,1])**2 + np.abs(self.da[1,1] - self.da[2,2])**2 + np.abs(self.da[2,2] - self.da[0,0])**2  + 6 * ( np.abs(self.da[0,1])**2 + np.abs(self.da[1,2])**2 + np.abs(self.da[2,0])**2 ) )
 
-		# print(f2nu(self.resonancefreq))
-		d_sigma = np.pi**2/(const.epsilon_0**2) * (conv.f2nu_SI(self.resonancefreq) - nu_p*100)**4 * const.h / (8 * np.pi**2 * const.c * nu_p*100) * (45*ak**2 + 7 * gamma_k2)/45 * 1 / (1 - np.exp(- const.h * const.c * nu_p*100 / ( const.k * kwargs['T'] )))
+		# print('(45 a_k**2 + 7 gamma_k**2) (angstrom**4/amu ?): \t', (45*ak**2 + 7 * gamma_k2)*conv.bohr2angstrom(1)**4)
+
+		ak_SI = 1/float(3) * np.abs( self.da_SI[0,0] + self.da_SI[1,1] + self.da_SI[2,2])
+
+		gamma_k2_SI = 1/float(2) * ( np.abs(self.da_SI[0,0] - self.da_SI[1,1])**2 + np.abs(self.da_SI[1,1] - self.da_SI[2,2])**2 + np.abs(self.da_SI[2,2] - self.da_SI[0,0])**2  + 6 * ( np.abs(self.da_SI[0,1])**2 + np.abs(self.da_SI[1,2])**2 + np.abs(self.da_SI[2,0])**2 ) )
+
+		d_sigma = np.pi**2/(const.epsilon_0**2) * (conv.f2nu_SI(self.resonancefreq) - nu_p*100)**4 * const.h / (8 * np.pi**2 * const.c * nu_p*100) * (45*ak_SI**2 + 7 * gamma_k2_SI)/45 * 1 / (1 - np.exp(- const.h * const.c * nu_p*100 / ( const.k * kwargs['T'] )))
+
+		print('frequency factor: \t\t', np.pi**2/(const.epsilon_0**2) * (conv.f2nu_SI(self.resonancefreq) - nu_p*100)**4 * const.h / (8 * np.pi**2 * const.c * nu_p*100))
+		print('(45 a_k**2 + 7 gamma_k**2)/45 (SI): \t', (45*ak_SI**2 + 7 * gamma_k2_SI)/45)
+		print('Temperature factor: \t\t', 1 / (1 - np.exp(- const.h * const.c * nu_p*100 / ( const.k * kwargs['T'] ))))
 
 		return nu_p, d_sigma, conv.f2eV(self.resonancefreq)
 
@@ -441,28 +396,7 @@ class Raman:
 #####		RT-TDDFT Excited state gradient method										      #####
 ###################################################################################################
 
-
 class ESGM:
-	def __init__(self, kwargs):
-		kwargs['diag'] = True
-		self.polarizability = polarizability(kwargs)
-
-	def pade_poly(self, kwargs):
-		kwargs['FT_method'] = 'pade_poly'
-		_f, self.polys = self.polarizability.tensor(kwargs)
-		# return self.polys
-
-	def single_point(self, w):
-		W = np.exp(-1j * conv.ev2au(w) * self.polarizability.timestep * 2 * np.pi)
-		
-		trace = [i(W)/j(W) for (i, j) in self.polys]
-		# print(trace)
-		trace = shift2upperplane(trace)
-		f = w*const.e/const.h
-		return 4 * np.pi * f / (3 * const.c) * np.imag(trace[0] + trace[1] + trace[2])
-
-
-class ESGM_2:
 	def __init__(self, kwargs):
 		kwargs['diag'] = True
 		kwargs_p = {'ts' : kwargs['ts'], 'code' : kwargs['code'], 'files' : kwargs['files_p'], 'diag' : True, 'properties' : ('RT-edipole', ) } 
@@ -478,51 +412,35 @@ class ESGM_2:
 		print(self.signal_length)
 
 	def get_polarizabilities(self, kwargs):
-		self.single_point = True
 		ft_args = parse_ft_args(kwargs, self.signal_length)
-		start = ft_args['start']
-		stop = ft_args['stop']
-		ft_length = stop - start
 
 		if 'fieldstrength' in kwargs:
 			self.fieldstrength = kwargs['fieldstrength']
 		else:
 			self.fieldstrength = 1
+			print('fieldstrength was set to 1 [au]')
 
-		print('fieldstrength [a. u.]:', self.fieldstrength)
 		# damping the signal
-		if kwargs['broadening'] is not None:
-			print('damping signal ...')
-			factor = np.exp(-(self.timestep*np.arange(ft_length)*float(kwargs['broadening'])))*self.timestep
-			signal_p = np.asarray([sig*factor for sig in self.read_p.signals['RT-edipole'][:,start:stop]])
-			signal_m = np.asarray([sig*factor for sig in self.read_m.signals['RT-edipole'][:,start:stop]])
-			self.signal_damped = signal_m
-		else:
-			signal_p = self.read_p.signals['RT-edipole'][:,start:stop]
-			signal_m = self.read_m.signals['RT-edipole'][:,start:stop]
+		signal_p = self.read_p.damping_signal(self.read_p.signals['RT-edipole'], self.timestep, ft_args)
+		signal_m = self.read_m.damping_signal(self.read_m.signals['RT-edipole'], self.timestep, ft_args)
 
 		# Pade approximation
-		if kwargs['FT_method'] == 'pade':
-			print('Pade approximants...')
+		frequencies_p, self.ft_p, sp = self.read_p.FT_unified(signal_p, self.timestep, ft_args)
+		frequencies_m, self.ft_m, sp = self.read_m.FT_unified(signal_m, self.timestep, ft_args)
 
-			self.ft_p = tuple([pade(sig, ft_length, self.timestep, 0, single_point = True) for sig in signal_p])
-			self.ft_m = tuple([pade(sig, ft_length, self.timestep, 0, single_point = True) for sig in signal_m])
-
-		else:
-			raise KeyError('RT-ESGM is only possible with pade approximants, because the discrete FT has usually not enough points to resolve the excitation energies')
 
 	def scan_p(self, w):
 		W = np.exp(-1j * conv.ev2au(w) * self.timestep * 2 * np.pi)
-		trace = shift2upperplane([i(W)/j(W)/self.fieldstrength for (i, j) in self.ft_p])
+		trace = [i(W)/j(W)/self.fieldstrength for (i, j) in self.ft_p]
 
-		f = w*const.e/const.h 				# convert to Hz [SI]
+		f = conv.eV2f(w) 				# convert to Hz [SI]
 		return 4 * np.pi * f / (3 * const.c) * np.imag(trace[0] + trace[1] + trace[2])		
 	
 	def scan_m(self, w):
 		W = np.exp(-1j * conv.ev2au(w) * self.timestep * 2 * np.pi)
-		trace = shift2upperplane([i(W)/j(W)/self.fieldstrength for (i, j) in self.ft_m])
+		trace = [i(W)/j(W)/self.fieldstrength for (i, j) in self.ft_m]
 
-		f = w*const.e/const.h 				# convert to Hz [SI]
+		f = conv.eV2f(w) 				# convert to Hz [SI]
 		return 4 * np.pi * f / (3 * const.c) * np.imag(trace[0] + trace[1] + trace[2])		
 
 	def exc_ener_p(self, lower, upper):
@@ -535,66 +453,4 @@ class ESGM_2:
 		return np.abs(self.exc_ener_p(lower, upper) - self.exc_ener_m(lower, upper))/fd
 
 if __name__ == "__main__":
-	# import Xpect.Xpect as Xpect
-	# from Xpect import RT_3
-	import matplotlib.pyplot as plt
-
-	# broadening =  0.0037	# broadining factor gamma:  exp(- gamma * t) [a. u.]
-
-	# # files_mag = ("/home/jmatti/projects/methyloxirane/ts_au_TZVP/r-methyloxirane_pbe_x-dir_TZVP-output-moments.dat", "/home/jmatti/projects/methyloxirane/ts_au_TZVP/r-methyloxirane_pbe_y-dir_TZVP-output-moments.dat", "/home/jmatti/projects/methyloxirane/ts_au_TZVP/r-methyloxirane_pbe_z-dir_TZVP-output-moments.dat")
-	# # files_TZV2P_onerun_r = ("/home/jmatti/projects/methyloxirane/onerun/r-methyloxirane_pbe_TZV2P-GTH_onerun-output-moments.dat", )
-	# # uracil = ("/home/jmatti/projects/uracil/ehrenfest_gasphase_2/uracil_ehrenfest_gasphase_x-dir-output-moments.dat", "/home/jmatti/projects/uracil/ehrenfest_gasphase_2/uracil_ehrenfest_gasphase_y-dir-output-moments.dat", "/home/jmatti/projects/uracil/ehrenfest_gasphase_2/uracil_ehrenfest_gasphase_z-dir-output-moments.dat")
-	# # files_p = ("/home/jmatti/projects/uracil/raman_all/results/uracil_mode_20_x-dir_p-output-moments.dat", "/home/jmatti/projects/uracil/raman_all/results/uracil_mode_20_y-dir_p-output-moments.dat", "/home/jmatti/projects/uracil/raman_all/results/uracil_mode_20_z-dir_p-output-moments.dat")
-	# # files_m = ("/home/jmatti/projects/uracil/raman_all/results/uracil_mode_20_x-dir_m-output-moments.dat", "/home/jmatti/projects/uracil/raman_all/results/uracil_mode_20_y-dir_m-output-moments.dat", "/home/jmatti/projects/uracil/raman_all/results/uracil_mode_20_z-dir_m-output-moments.dat")
-
-
-	# # Test Raman
-	# files_ESGM_m = ("/home/jmatti/projects/methyloxirane/Raman_TZV2P-GTH_2/results/r-meth_mode_4_x-dir_m-output-moments.dat", "/home/jmatti/projects/methyloxirane/Raman_TZV2P-GTH_2/results/r-meth_mode_4_y-dir_m-output-moments.dat", "/home/jmatti/projects/methyloxirane/Raman_TZV2P-GTH_2/results/r-meth_mode_4_z-dir_m-output-moments.dat")
-	# files_ESGM_p = ("/home/jmatti/projects/methyloxirane/Raman_TZV2P-GTH_2/results/r-meth_mode_4_x-dir_p-output-moments.dat", "/home/jmatti/projects/methyloxirane/Raman_TZV2P-GTH_2/results/r-meth_mode_4_y-dir_p-output-moments.dat", "/home/jmatti/projects/methyloxirane/Raman_TZV2P-GTH_2/results/r-meth_mode_4_z-dir_p-output-moments.dat")
-
-	# test_Raman = Raman({'ts' : '0.1 au', 'files_p' : files_ESGM_p, 'files_m' : files_ESGM_m, 'code' : 'CP2K'})
-	# # test_Raman.get_polarizabilities({'FT_method' : 'pade', 'pade_ws' : (0, 10, 0.01), 'start' : 0, 'stop' : 10000, 'broadening' : broadening})
-	# # test_Raman.get_polarizabilities({'FT_method' : 'rfft', 'pade_ws' : (0, 10, 0.01), 'start' : 0, 'stop' : 100000, 'broadening' : broadening})
-	# # test_Raman.get_polarizabilities({'FT_method' : 'pade', 'pade_ws' : 10, 'start' : 0, 'stop' : 10000, 'broadening' : broadening})
-	# nu = 5.445591604207750152e+02
-	# sQ = 7.331718720000000076e+02
-	# excf = 3
-
-
-	# test_Raman.get_polarizabilities({'FT_method' : 'pade', 'pade_ws' : (0, 10, 0.01), 'start' : 0, 'stop' : 40000, 'broadening' : broadening})
-	# test_Raman.deriv(sQ, excf)
-	# nu_p, sigma, f = test_Raman.intensity({'nu_p' : nu, 'T' : 300})
-	# print(nu_p, sigma, f)
-
-	# test_Raman.get_polarizabilities({'FT_method' : 'pade', 'pade_ws' : None, 'start' : 0, 'stop' : 40000, 'broadening' : broadening})
-	# test_Raman.deriv(sQ, excf)
-	# nu_p, sigma, f = test_Raman.intensity({'nu_p' : nu, 'T' : 300})
-	# print(nu_p, sigma, f)
-
-	# test_Raman.get_polarizabilities({'FT_method' : 'rfft', 'start' : 0, 'stop' : 100000, 'broadening' : broadening})
-	# test_Raman.deriv(sQ, excf)
-	# nu_p, sigma, f = test_Raman.intensity({'nu_p' : nu, 'T' : 300})
-	# print(nu_p, sigma, f)
-
-	# test_Raman.get_polarizabilities({'FT_method' : 'rfft',  'start' : 0, 'stop' : 100000, 'broadening' : None})
-	# test_Raman.deriv(sQ, excf)
-	# nu_p, sigma, f = test_Raman.intensity({'nu_p' : nu, 'T' : 300})
-	# print(nu_p, sigma, f)
-
-	# print(test_Raman.signal_damped.shape)
-	# print([i[0] for i in test_Raman.ft_p])
-	
-	# print(type(test_Raman.ft_p))
-	# print(test_Raman.deriv(1,2))
-	# print(test_Raman.a_p)
-	# plt.plot(np.arange(len(test_Raman.signal_damped[5,:])), test_Raman.signal_damped[5,:])
-	# plt.plot(test_Raman.frequencies /const.e * const.h, np.imag(test_Raman.ft_p[5]))
-	# plt.savefig('/home/jmatti/projects/output/art.pdf', format = 'pdf')
-	# plt.show()
-
-	print(debye2au(1))
-	print(angstromtobohr(1))
-	print(bohrtoangstrom(1))
-	print(polarizability_autoSI(1))
-	print(polarizability_deriv_autoSI(1))
-	print(const.value('Bohr radius')/np.sqrt(const.m_e))
+	from matplotlib import pyplot as plt
