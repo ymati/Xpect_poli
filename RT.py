@@ -386,6 +386,10 @@ class Raman:
 
 		d_sigma = np.pi**2/(const.epsilon_0**2) * (conv.f2nu_SI(self.resonancefreq) - nu_p*100)**4 * const.h / (8 * np.pi**2 * const.c * nu_p*100) * (45*ak_SI**2 + 7 * gamma_k2_SI)/45 * 1 / (1 - np.exp(- const.h * const.c * nu_p*100 / ( const.k * kwargs['T'] )))
 
+		self.frequency_factor = np.pi**2/(const.epsilon_0**2) * (conv.f2nu_SI(self.resonancefreq) - nu_p*100)**4 * const.h / (8 * np.pi**2 * const.c * nu_p*100)
+		self.Raman_activity_SI = (45*ak_SI**2 + 7 * gamma_k2_SI)/45
+		self.temperature_factor =  1 / (1 - np.exp(- const.h * const.c * nu_p*100 / ( const.k * kwargs['T'] )))
+
 		print('frequency factor: \t\t', np.pi**2/(const.epsilon_0**2) * (conv.f2nu_SI(self.resonancefreq) - nu_p*100)**4 * const.h / (8 * np.pi**2 * const.c * nu_p*100))
 		print('(45 a_k**2 + 7 gamma_k**2)/45 (SI): \t', (45*ak_SI**2 + 7 * gamma_k2_SI)/45)
 		print('Temperature factor: \t\t', 1 / (1 - np.exp(- const.h * const.c * nu_p*100 / ( const.k * kwargs['T'] ))))
