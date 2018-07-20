@@ -86,6 +86,8 @@ class Raman_RT:
 	def intensity(self, **kwargs):
 		return self.spec.intensity(kwargs)
 
+	def factor_decomp(self):
+		return self.spec.frequency_factor, self.spec.Raman_activity_SI, self.spec.temperature_factor
 
 class ESGM_RT:
 	"""
