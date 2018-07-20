@@ -3,7 +3,6 @@ from Xpect_new import convert_units as conv
 import numpy as np 
 from scipy import constants as const
 import re
-from Xpect_new import XFT_2 as XFT
 import math
 
 def find_nearest(array,value):
